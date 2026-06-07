@@ -29,8 +29,7 @@ class UsbStealthModule : IXposedHookLoadPackage {
                             val originalValue = param.result as Int
                             if (originalValue == 2) { // 2 = BATTERY_PLUGGED_USB
                                 param.result = 1     // 1 = BATTERY_PLUGGED_AC
-                                // Optional: Log when the spoof actually happens
-                                // XposedBridge.log("[UsbStealth] Spoofed plugged state from USB to AC")
+                                XposedBridge.log("[UsbStealth] Spoofed plugged state from USB to AC")
                             }
                         }
                     }
