@@ -2,91 +2,40 @@ package com.bypassusb
 
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
-import de.robv.android.xposed.XposedHelpers
-import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
+import de.robv.android.xposed.XC_MethodReplacement.Companion.returnConstant
+import de.robv.android.xposed.XposedBridge.log
+import de.robv.android.xposed.XposedHelpers.findClassIfExists
+import de.robv.android.xposed.callbacks.XC_LoadPackage
 
-class UsbStealthModule : IXposedHookLoadPackage {
-    override fun handleLoadPackage(lpparam: LoadPackageParam) {
-      
-        val targetApp = "com.sbi.upi" 
+class XposedInit : IXposedHookLoadPackage {
+    override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
+        if (lpparam.packageName != "com.ubercab.driver") return
         
-        if (lpparam.packageName != targetApp) return
-        if (lpparam.processName != targetApp) return
-
-        XposedBridge.log("Loaded into $targetApp")
-
         try {
-            XposedHelpers.findAndHookMethod(
-                android.content.Intent::class.java,
-                "getIntExtra",
-                String::class.java,
-                Int::class.javaPrimitiveType,
-                object : XC_MethodHook() {
-                    override fun afterHookedMethod(param: MethodHookParam) {
-                        val key = param.args[0] as String
-                        if (key == "plugged") {
-                            val originalValue = param.result as Int
-                            if (originalValue == 2) { // 2 = BATTERY_PLUGGED_USB
-                                param.result = 1     // 1 = BATTERY_PLUGGED_AC
-                                XposedBridge.log("[UsbStealth] Spoofed plugged state from USB to AC")
-                            }
-                        }
-                    }
-                }
-            )
+            val clazz = findClassIfExists("com.ubercab.force_app_upgrade.c", lpparam.classLoader)
+                ?: throw ClassNotFoundException("Target class not found")
 
-            XposedHelpers.findAndHookMethod(
-                "android.content.Intent",
-                lpparam.classLoader,
-                "getBooleanExtra",
-                String::class.java,
-                Boolean::class.javaPrimitiveType,
-                object : XC_MethodHook() {
-                    override fun afterHookedMethod(param: MethodHookParam) {
-                        val key = param.args[0] as String
-                        if (key == "connected" || key == "host_connected") {
-                            param.result = false 
-                        }
-                    }
-                }
-            )
+            // Hook b() -> ForceAppUpgradeCheck → always return false!
+            val method = clazz.declaredMethods.firstOrNull { 
+                it.name == "b" && 
+                it.parameterTypes.size == 1 &&
+                it.returnType == Boolean::class.javaPrimitiveType 
+            } ?: throw NoSuchMethodException("Method b(Ljava/lang/Object;)Z not found")
 
-            XposedHelpers.findAndHookMethod(
-                "android.os.SystemProperties",
-                lpparam.classLoader,
-                "get",
-                String::class.java,
-                String::class.java,
-                object : XC_MethodHook() {
-                    override fun beforeHookedMethod(param: MethodHookParam) {
-                        val key = param.args[0] as String
-                        if (key == "sys.usb.state" || key == "sys.usb.config") {
-                            param.result = "none"
-                        }
-                    }
-                }
-            )
+            XposedBridge.log("[DadGPT] Hooking Uber force upgrade check...")
 
-            val targetSettingsKeys = listOf("usb_mass_storage_enabled", "adb_enabled")
-            XposedHelpers.findAndHookMethod(
-                "android.provider.Settings\$Global",
-                lpparam.classLoader,
-                "getInt",
-                android.content.ContentResolver::class.java,
-                String::class.java,
-                Int::class.javaPrimitiveType,
-                object : XC_MethodHook() {
-                    override fun beforeHookedMethod(param: MethodHookParam) {
-                        val key = param.args[1] as String
-                        if (targetSettingsKeys.contains(key)) {
-                            param.result = 0 
-                        }
-                    }
+            // Nuke it with constant FALSE!
+            XposedBridge.hookMethod(method, object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    param.result = false  // <<== FUCK THEM UPSTREAM!
                 }
-            )
+            })
+
+            XposedBridge.log("[DadGPT] Uber 'Update Required' bypassed! Welcome to infinite trips.")
+
         } catch (t: Throwable) {
-            XposedBridge.log("[UsbStealth] Error hooking $targetApp: ${t.message}")
+            XposedBridge.log("[DadGPT] Hook failed: ${t.message}")
+            t.printStackTrace()
         }
     }
 }
