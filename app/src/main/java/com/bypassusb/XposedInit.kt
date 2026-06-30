@@ -1,9 +1,8 @@
 package com.bypassusb
 
-import android.view.View
-import android.view.ViewGroup
+import android.app.Dialog
 import android.content.Context
-import android.util.AttributeSet
+import android.content.Intent
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
@@ -14,58 +13,11 @@ class XposedInit : IXposedHookLoadPackage {
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
         if (lpparam.packageName != "com.ubercab.driver") return
 
-        XposedBridge.log("BypassUSB: 🎯 Target app matched! Initializing hook registry...")
+        XposedBridge.log("BypassUSB: 🎯 Target app matched! Applying advanced bypass filters...")
         val loader = lpparam.classLoader
 
-        // The 3 layout views Uber uses to build update/online blocker walls
-        val blockerViews = listOf(
-            "com.ubercab.force_app_upgrade.ForceAppUpgradeView",
-            "com.ubercab.driver_scheduler.online_offline.SchedulerOnlineBlockerView",
-            "com.ubercab.carbon.core.online_blockers.OnlineBlockersView"
-        )
-
         // =================================================================
-        // STRATEGY 1: UI Constructor Nuke
-        // =================================================================
-        for (viewClass in blockerViews) {
-            try {
-                // Hook the standard Android View constructor used by XML layouts
-                XposedHelpers.findAndHookConstructor(
-                    viewClass,
-                    loader,
-                    Context::class.java,
-                    AttributeSet::class.java,
-                    object : XC_MethodHook() {
-                        override fun afterHookedMethod(param: MethodHookParam) {
-                            val view = param.thisObject as View
-                            XposedBridge.log("BypassUSB: 💥 CRITICAL hit! Blocker view created: $viewClass")
-
-                            // Force the view to disappear completely and drop inputs
-                            view.visibility = View.GONE
-                            view.isClickable = false
-                            view.isFocusable = false
-
-                            // Post-routine: Safely rip the view out of its parent layout
-                            view.post {
-                                try {
-                                    val parent = view.parent as? ViewGroup
-                                    parent?.removeView(view)
-                                    XposedBridge.log("BypassUSB: 🗑️ Successfully deleted $viewClass from window hierarchy")
-                                } catch (e: Throwable) {
-                                    // Parent layout not ready yet, skip quietly
-                                }
-                            }
-                        }
-                    }
-                )
-                XposedBridge.log("BypassUSB: ✅ UI Hook successfully registered for: $viewClass")
-            } catch (t: Throwable) {
-                XposedBridge.log("BypassUSB: ⚠️ UI Hook registration failed for $viewClass: ${t.message}")
-            }
-        }
-
-        // =================================================================
-        // STRATEGY 2: Verbose Data-Layer Tracker
+        // 1. DATA LAYER: Kill both FORCE_UPGRADE and UNKNOWN signals
         // =================================================================
         try {
             XposedHelpers.findAndHookMethod(
@@ -75,18 +27,67 @@ class XposedInit : IXposedHookLoadPackage {
                 object : XC_MethodHook() {
                     override fun afterHookedMethod(param: MethodHookParam) {
                         val result = param.result
-                        XposedBridge.log("BypassUSB: 📊 DriverCheckIssueData.type() evaluated to: $result")
-                        
-                        if (result != null && result.toString() == "FORCE_UPGRADE") {
-                            param.result = null
-                            XposedBridge.log("BypassUSB: 🛡️ Overrode Data-Layer status to NULL")
+                        if (result != null) {
+                            val typeStr = result.toString()
+                            if (typeStr == "FORCE_UPGRADE" || typeStr == "UNKNOWN") {
+                                param.result = null
+                                XposedBridge.log("BypassUSB: 🛡️ Intercepted and wiped issue type: $typeStr")
+                            }
                         }
                     }
                 }
             )
-            XposedBridge.log("BypassUSB: ✅ Data-layer Tracker successfully registered")
         } catch (t: Throwable) {
-            XposedBridge.log("BypassUSB: ⚠️ Data-layer Tracker registration failed: ${t.message}")
+            XposedBridge.log("BypassUSB: ⚠️ Data-layer interceptor failed to bind: ${t.message}")
+        }
+
+        // =================================================================
+        // 2. DIAGNOSTIC: Catch UI Dialogs and dump their creation paths
+        // =================================================================
+        try {
+            XposedHelpers.findAndHookMethod(
+                "android.app.Dialog",
+                loader,
+                "show",
+                object : XC_MethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam) {
+                        val dialog = param.thisObject as Dialog
+                        XposedBridge.log("BypassUSB: 🚨 DIALOG CAPTURED! Object class: ${dialog.javaClass.name}")
+                        
+                        // Dump the entire call stack to pinpoint exactly what class invoked it
+                        val stackTrace = RuntimeException("BypassUSB Tracer").stackTrace
+                        for (i in 0 until minOf(15, stackTrace.size)) {
+                            XposedBridge.log("   at ${stackTrace[i]}")
+                        }
+                    }
+                }
+            )
+        } catch (t: Throwable) {
+            XposedBridge.log("BypassUSB: ⚠️ Framework Dialog tracker failed to bind: ${t.message}")
+        }
+
+        // =================================================================
+        // 3. FRAMEWORK: Block outbound Play Store redirects globally
+        // =================================================================
+        try {
+            XposedHelpers.findAndHookMethod(
+                "android.content.ContextWrapper",
+                loader,
+                "startActivity",
+                Intent::class.java,
+                object : XC_MethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam) {
+                        val intent = param.args[0] as? Intent
+                        val dataUrl = intent?.data?.toString() ?: ""
+                        if (dataUrl.contains("market://details") || dataUrl.contains("com.ubercab.driver")) {
+                            param.result = null // Block the redirection intent cleanly
+                            XposedBridge.log("BypassUSB: 🚫 Blocked system redirect to Play Store: $dataUrl")
+                        }
+                    }
+                }
+            )
+        } catch (t: Throwable) {
+            XposedBridge.log("BypassUSB: ⚠️ Framework Intent blocker failed to bind: ${t.message}")
         }
     }
 }
