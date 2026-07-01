@@ -11,7 +11,7 @@ class XposedInit : IXposedHookLoadPackage {
 
     companion object {
         private const val TARGET_PACKAGE = "com.lyft.android.driver"
-        private const val TAG = "[WahBuddy-Spoofer]"
+        private const val TAG = "[LYFT]"
         
         // Legit values from the latest configuration
         private const val LATEST_VERSION_CODE = 1782286115
